@@ -12,6 +12,7 @@ import android.hardware.SensorManager;
 import android.location.Location;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import android.widget.Toast;
 
@@ -20,13 +21,17 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 
 import com.google.android.gms.location.FusedLocationProviderClient;
+import com.google.android.gms.location.LocationCallback;
+import com.google.android.gms.location.LocationRequest;
+import com.google.android.gms.location.LocationResult;
 import com.google.android.gms.location.LocationServices;
+import com.google.android.gms.location.Priority;
 
-public class MainActivity extends AppCompatActivity implements SensorEventListener {   
+public class MainActivity extends AppCompatActivity implements SensorEventListener {
 
     private SensorManager sensorManager;
     private Sensor accelerometer;
-    private static final float FALL_THRESHOLD = 9.0f;
+    private static final float FALL_THRESHOLD = 25.0f;
     private FusedLocationProviderClient fusedLocationClient;
     private boolean accidentAlertActive = false;
     private final Handler alertHandler = new Handler();
@@ -34,24 +39,24 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_main); // You can keep your navigation setup too
+        setContentView(R.layout.activity_main);
 
         sensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
         accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
 
-        // Check for accelerometer
         if (accelerometer == null) {
             Toast.makeText(this, "Accelerometer not available on this device.", Toast.LENGTH_LONG).show();
             finish();
             return;
         }
 
-        // Ask permissions for location
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
                 != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this,
                     new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, 1);
+        } else {
+            startSpeedMonitoring(); // Start speed tracking if permission already granted
         }
     }
 
@@ -132,6 +137,36 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
                 });
     }
 
+    private void startSpeedMonitoring() {
+        LocationRequest locationRequest = LocationRequest.create()
+                .setPriority(Priority.PRIORITY_HIGH_ACCURACY)
+                .setInterval(2000); // Every 2 seconds
+
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED && ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            // TODO: Consider calling
+            //    ActivityCompat#requestPermissions
+            // here to request the missing permissions, and then overriding
+            //   public void onRequestPermissionsResult(int requestCode, String[] permissions,
+            //                                          int[] grantResults)
+            // to handle the case where the user grants the permission. See the documentation
+            // for ActivityCompat#requestPermissions for more details.
+            return;
+        }
+        fusedLocationClient.requestLocationUpdates(locationRequest, new LocationCallback() {
+            @Override
+            public void onLocationResult(LocationResult locationResult) {
+                if (locationResult == null) return;
+
+                for (Location location : locationResult.getLocations()) {
+                    float speedMps = location.getSpeed();     // meters per second
+                    float speedKmph = speedMps * 3.6f;         // convert to km/h
+                    Log.d("Speed", "Current speed: " + speedKmph + " km/h");
+                    Toast.makeText(MainActivity.this, "Speed: " + speedKmph + " km/h", Toast.LENGTH_SHORT).show();
+                }
+            }
+        }, Looper.getMainLooper());
+    }
+
     @Override
     public void onAccuracyChanged(Sensor sensor, int accuracy) {
         // Not used
@@ -142,10 +177,9 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == 1) {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                // Permission granted
                 Toast.makeText(this, "Location permission granted!", Toast.LENGTH_SHORT).show();
+                startSpeedMonitoring(); // Start speed monitoring after permission granted
             } else {
-                // Permission denied
                 Toast.makeText(this, "Location permission denied.", Toast.LENGTH_SHORT).show();
             }
         }
