@@ -28,6 +28,14 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import android.widget.Toast;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
@@ -91,14 +99,14 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
         }
         // this is tester codeee
-//        new Handler().postDelayed(() -> {
-//            freeFallDetected = true;
-//            impactDetected = true;
-//            rotationDetected = true;
-//            speedDropDetected = true;
-//
-//            checkAccidentFusion();
-//        }, 3000);
+        new Handler().postDelayed(() -> {
+            freeFallDetected = true;
+            impactDetected = true;
+            rotationDetected = true;
+            speedDropDetected = true;
+
+            checkAccidentFusion();
+        }, 3000);
     }
 
     @Override
@@ -245,8 +253,51 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
         }, 10000);
     }
+    /**
+     * Displays accident result including address and nearest hospital.
+     */
+    private void showAccidentResultDialog(
+            double lat,
+            double lon,
+            String address,
+            String hospitalInfo) {
+
+        AlertDialog.Builder builder =
+                new AlertDialog.Builder(this);
+
+        builder.setTitle("Accident Confirmed");
+
+        String message =
+                "Address:\n" + address + "\n\n"
+                        + "Nearest Hospital:\n"
+                        + hospitalInfo;
+
+        builder.setMessage(message);
+
+        builder.setPositiveButton("Open in Maps",
+                (dialog, which) -> {
+
+                    String uri =
+                            "https://maps.google.com/?q="
+                                    + lat + "," + lon;
+
+                    startActivity(new android.content.Intent(
+                            android.content.Intent.ACTION_VIEW,
+                            android.net.Uri.parse(uri)));
+                });
+
+        builder.setNegativeButton("Close",
+                (dialog, which) -> dialog.dismiss());
+
+        builder.show();
+    }
 
     // loc thing
+    /**
+     * Called when accident is confirmed after sensor fusion.
+     * Retrieves GPS location, converts coordinates to address,
+     * finds nearest hospital, and displays result.
+     */
     private void handleAccidentDetected() {
 
         Toast.makeText(this,
@@ -269,15 +320,36 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
                         Log.d("Location",
                                 "Lat: " + lat + " Lon: " + lon);
 
+                        // Run both API calls in background thread
+                        new Thread(() -> {
+
+                            // Step 1: Reverse Geocoding (Coordinates → Address)
+                            String address =
+                                    getAddressFromCoordinates(lat, lon);
+
+                            // Step 2: Find Nearest Hospital
+                            String hospitalList = findHospitalsInRange(lat, lon);
+
+                            // Step 3: Update UI safely
+                            runOnUiThread(() -> {
+
+                                showAccidentResultDialog(
+                                        lat,
+                                        lon,
+                                        address,
+                                        hospitalList
+                                );
+                            });
+
+                        }).start();
+
+                    } else {
                         Toast.makeText(this,
-                                "Accident at:\nLat:"
-                                        + lat +
-                                        "\nLon:" + lon,
-                                Toast.LENGTH_LONG).show();
+                                "Unable to fetch location",
+                                Toast.LENGTH_SHORT).show();
                     }
                 });
     }
-
     // speed mon
     private void startSpeedMonitoring() {
 
@@ -328,6 +400,160 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
                 Looper.getMainLooper());
     }
 
+    /**
+     * Converts latitude and longitude into a human-readable address
+     * using OpenStreetMap Nominatim reverse geocoding API.
+     */
+    private String getAddressFromCoordinates(double lat, double lon) {
+
+        try {
+
+            String urlString =
+                    "https://nominatim.openstreetmap.org/reverse?format=json"
+                            + "&lat=" + lat
+                            + "&lon=" + lon
+                            + "&zoom=18"
+                            + "&addressdetails=1";
+
+            URL url = new URL(urlString);
+
+            HttpURLConnection connection =
+                    (HttpURLConnection) url.openConnection();
+
+            connection.setRequestMethod("GET");
+
+            // Required header for Nominatim API
+            connection.setRequestProperty(
+                    "User-Agent",
+                    "MajorProj123App");
+
+            BufferedReader reader =
+                    new BufferedReader(
+                            new InputStreamReader(
+                                    connection.getInputStream()));
+
+            StringBuilder response =
+                    new StringBuilder();
+
+            String line;
+
+            while ((line = reader.readLine()) != null) {
+                response.append(line);
+            }
+
+            reader.close();
+
+            JSONObject jsonObject =
+                    new JSONObject(response.toString());
+
+            return jsonObject.getString("display_name");
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+        return "Address not available";
+    }
+
+
+    /**
+     * Returns a formatted list of all hospitals
+     * within 5km of accident location.
+     */
+    private String findHospitalsInRange(double accidentLat,
+                                        double accidentLon) {
+
+        StringBuilder hospitalList =
+                new StringBuilder();
+
+        try {
+
+            String query =
+                    "https://overpass-api.de/api/interpreter?data=" +
+                            "[out:json];node[\"amenity\"=\"hospital\"](around:50000," +
+                            accidentLat + "," + accidentLon + ");out;";
+
+            URL url = new URL(query);
+
+            HttpURLConnection connection =
+                    (HttpURLConnection) url.openConnection();
+
+            connection.setRequestMethod("GET");
+
+            BufferedReader reader =
+                    new BufferedReader(
+                            new InputStreamReader(
+                                    connection.getInputStream()));
+
+            StringBuilder response =
+                    new StringBuilder();
+
+            String line;
+
+            while ((line = reader.readLine()) != null) {
+                response.append(line);
+            }
+
+            reader.close();
+
+            JSONObject jsonObject =
+                    new JSONObject(response.toString());
+
+            JSONArray elements =
+                    jsonObject.getJSONArray("elements");
+
+            if (elements.length() == 0) {
+                return "No hospitals found within 5 km";
+            }
+
+            // Loop through ALL hospitals
+            for (int i = 0; i < elements.length(); i++) {
+
+                JSONObject hospital =
+                        elements.getJSONObject(i);
+
+                double hospitalLat =
+                        hospital.getDouble("lat");
+
+                double hospitalLon =
+                        hospital.getDouble("lon");
+
+                float[] results = new float[1];
+
+                // Calculate distance
+                Location.distanceBetween(
+                        accidentLat,
+                        accidentLon,
+                        hospitalLat,
+                        hospitalLon,
+                        results
+                );
+
+                double distanceKm =
+                        results[0] / 1000.0;
+
+                JSONObject tags =
+                        hospital.getJSONObject("tags");
+
+                String name =
+                        tags.optString("name",
+                                "Unnamed Hospital");
+
+                hospitalList.append("• ")
+                        .append(name)
+                        .append(" (")
+                        .append(String.format("%.2f", distanceKm))
+                        .append(" km)\n");
+            }
+
+            return hospitalList.toString();
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+        return "Error retrieving hospitals";
+    }
     @Override
     public void onAccuracyChanged(Sensor sensor, int accuracy) {}
     // perm
