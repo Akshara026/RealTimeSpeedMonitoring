@@ -1,22 +1,21 @@
 package com.example.majorproj123;
 
-//if (freeFallDetected && impactDetected && rotationDetected && speedDropDetected && !accidentAlertActive)  conditioins are met then only accident happneed
-//if (acceleration < FREE_FALL_THRESHOLD) detetcs free fall
-//if (acceleration > FALL_THRESHOLD) impact detetcted
-//if (rotation > ROTATION_THRESHOLD) rotation detetced
-//if (previousSpeed > 40 && speedDrop > SPEED_DROP_THRESHOLD) spped sudden dropped
-//combining accelerometer, gyroscope, and GPS data to identify free fall, impact, rotation, and sudden speed drop, which together indicate a real crash event
-
-//Why all 4 together are important
-//        If i use only ONE condition → many false alarms.
-//        Drop phone → free fall + impact but no speed drop → NOT accident
-//        Hard braking → speed drop but no free fall → NOT accident
-//        Shake phone → rotation but no impact → NOT accident
+//if (freeFallDetected && impactDetected && rotationDetected && speedDropDetected && !accidentAlertActive) conditioins are met then only accident happneed
+// if (acceleration < FREE_FALL_THRESHOLD) detetcs free fall
+// if (acceleration > FALL_THRESHOLD) impact detetcted //if (rotation > ROTATION_THRESHOLD) rotation detetced
+// if (previousSpeed > 40 && speedDrop > SPEED_DROP_THRESHOLD) spped sudden dropped
+// combining accelerometer, gyroscope, and GPS data to identify free fall, impact, rotation, and sudden speed drop, which together indicate a real crash event
+// Why all 4 together are important
+// If i use only ONE condition → many false alarms.
+// Drop phone → free fall + impact but no speed drop → NOT accident
+// Hard braking → speed drop but no free fall → NOT accident
+// Shake phone → rotation but no impact → NOT accident
 
 import android.Manifest;
 import android.app.AlertDialog;
 import android.content.Context;
-import android.content.DialogInterface;
+import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
@@ -28,14 +27,6 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import android.widget.Toast;
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.net.HttpURLConnection;
-import java.net.URL;
-
-import org.json.JSONArray;
-import org.json.JSONObject;
-
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
@@ -43,27 +34,41 @@ import androidx.core.app.ActivityCompat;
 
 import com.google.android.gms.location.*;
 
-public class MainActivity extends AppCompatActivity implements SensorEventListener {
+import org.json.JSONArray;
+import org.json.JSONObject;
 
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
+
+import android.telephony.SmsManager;
+
+public class MainActivity extends AppCompatActivity implements SensorEventListener {
 
     private SensorManager sensorManager;
     private Sensor accelerometer;
-    private static final float FALL_THRESHOLD = 10.0f; //it should be 25  for real life...but made 10 for testing
-    private FusedLocationProviderClient fusedLocationClient;
-    private boolean accidentAlertActive = false;
-    private final Handler alertHandler = new Handler();
-
-
     private Sensor gyroscope;
 
-    private static final float FREE_FALL_THRESHOLD = 2.0f;
+    private FusedLocationProviderClient fusedLocationClient;
+    private LocationCallback locationCallback;
+
+    private final Handler alertHandler = new Handler(Looper.getMainLooper());
+
+    // Thresholds
+    private static final float FREE_FALL_THRESHOLD = 1.5f;
+    private static final float IMPACT_THRESHOLD = 25.0f;
     private static final float ROTATION_THRESHOLD = 5.0f;
     private static final float SPEED_DROP_THRESHOLD = 30.0f;
 
-    private boolean freeFallDetected = false;
-    private boolean impactDetected = false;
-    private boolean rotationDetected = false;
-    private boolean speedDropDetected = false;
+    private static final long FUSION_WINDOW = 5000;
+
+    private long freeFallTime = 0;
+    private long impactTime = 0;
+    private long rotationTime = 0;
+    private long speedDropTime = 0;
+
+    private boolean accidentAlertActive = false;
 
     private float previousSpeed = 0f;
     private float currentSpeed = 0f;
@@ -71,10 +76,35 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        SharedPreferences prefs =
+                getSharedPreferences("EmergencyPrefs", MODE_PRIVATE);
+
+        if (!prefs.contains("familyNumber")) {
+            startActivity(new Intent(this, SetupActivity.class));
+            finish();
+            return;
+        }
+
         setContentView(R.layout.activity_main);
 
-        sensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
+        findViewById(R.id.btnTestSMS).setOnClickListener(v -> {
+            testSMSFunctionality();
+        });
 
+        findViewById(R.id.btnTestAccident).setOnClickListener(v -> {
+
+            long now = System.currentTimeMillis();
+
+            freeFallTime = now;
+            impactTime = now;
+            rotationTime = now;
+            speedDropTime = now;
+
+            checkAccidentFusion();
+        });
+
+        sensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
         accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
         gyroscope = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE);
 
@@ -92,21 +122,45 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
             ActivityCompat.requestPermissions(this,
                     new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, 1);
-
         } else {
-
             startSpeedMonitoring();
-
         }
-        // this is tester codeee
-        new Handler().postDelayed(() -> {
-            freeFallDetected = true;
-            impactDetected = true;
-            rotationDetected = true;
-            speedDropDetected = true;
 
-            checkAccidentFusion();
-        }, 3000);
+        if (ActivityCompat.checkSelfPermission(this,
+                Manifest.permission.SEND_SMS)
+                != PackageManager.PERMISSION_GRANTED) {
+
+            ActivityCompat.requestPermissions(this,
+                    new String[]{Manifest.permission.SEND_SMS}, 2);
+        }
+    }
+
+    private void testSMSFunctionality() {
+
+        SharedPreferences prefs = getSharedPreferences("EmergencyPrefs", MODE_PRIVATE);
+        String phone = prefs.getString("familyNumber", null);
+
+        if (phone == null) {
+            Toast.makeText(this, "No emergency contact saved", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        try {
+
+            SmsManager smsManager = SmsManager.getDefault();
+            smsManager.sendTextMessage(phone, null,
+                    "Test SMS from Accident Detection App", null, null);
+
+            Toast.makeText(this,
+                    "Test SMS sent to " + phone,
+                    Toast.LENGTH_SHORT).show();
+
+        } catch (Exception e) {
+
+            Toast.makeText(this,
+                    "Failed: " + e.getMessage(),
+                    Toast.LENGTH_LONG).show();
+        }
     }
 
     @Override
@@ -115,23 +169,26 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
         sensorManager.registerListener(this,
                 accelerometer,
-                SensorManager.SENSOR_DELAY_NORMAL);
+                SensorManager.SENSOR_DELAY_GAME);
 
         if (gyroscope != null) {
-
             sensorManager.registerListener(this,
                     gyroscope,
-                    SensorManager.SENSOR_DELAY_NORMAL);
+                    SensorManager.SENSOR_DELAY_GAME);
         }
     }
 
     @Override
     protected void onPause() {
         super.onPause();
+
         sensorManager.unregisterListener(this);
+
+        if (locationCallback != null) {
+            fusedLocationClient.removeLocationUpdates(locationCallback);
+        }
     }
 
-    // Ssensor detetction
     @Override
     public void onSensorChanged(SensorEvent event) {
 
@@ -141,168 +198,80 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
             float y = event.values[1];
             float z = event.values[2];
 
-            float acceleration =
-                    (float) Math.sqrt(x*x + y*y + z*z);
+            float magnitude = (float) Math.sqrt(x * x + y * y + z * z);
+            float acceleration = Math.abs(magnitude - SensorManager.GRAVITY_EARTH);
 
-            // FREE FALL DETECTION
             if (acceleration < FREE_FALL_THRESHOLD) {
-
-                freeFallDetected = true;
-
-                Log.d("Accident", "Free fall detected");
-
+                freeFallTime = System.currentTimeMillis();
             }
 
-            // impct detetcion
-            if (acceleration > FALL_THRESHOLD) {
-
-                impactDetected = true;
-
-                Log.d("Accident", "Impact detected");
-
+            if (acceleration > IMPACT_THRESHOLD) {
+                impactTime = System.currentTimeMillis();
             }
         }
 
-        // gyroscope detetctt
         if (event.sensor.getType() == Sensor.TYPE_GYROSCOPE) {
 
             float rx = event.values[0];
             float ry = event.values[1];
             float rz = event.values[2];
 
-            float rotation =
-                    (float) Math.sqrt(rx*rx + ry*ry + rz*rz);
+            float rotation = (float) Math.sqrt(rx * rx + ry * ry + rz * rz);
 
             if (rotation > ROTATION_THRESHOLD) {
-
-                rotationDetected = true;
-
-                Log.d("Accident", "Rotation detected");
-
+                rotationTime = System.currentTimeMillis();
             }
         }
 
         checkAccidentFusion();
     }
 
-    // SENSOR FUSION ALGORITHM
     private void checkAccidentFusion() {
 
-        if (freeFallDetected &&
-                impactDetected &&
-                rotationDetected &&
-                speedDropDetected &&
+        long now = System.currentTimeMillis();
+
+        boolean validFreeFall = now - freeFallTime < FUSION_WINDOW;
+        boolean validImpact = now - impactTime < FUSION_WINDOW;
+        boolean validRotation = now - rotationTime < FUSION_WINDOW;
+        boolean validSpeedDrop = now - speedDropTime < FUSION_WINDOW;
+
+        if (validFreeFall &&
+                validImpact &&
+                validRotation &&
+                validSpeedDrop &&
                 !accidentAlertActive) {
 
-            Log.d("Accident", "Accident confirmed by fusion");
-
             showAccidentAlert();
-
-            resetFlags();
         }
     }
 
-    private void resetFlags() {
-
-        freeFallDetected = false;
-        impactDetected = false;
-        rotationDetected = false;
-        speedDropDetected = false;
-
-    }
-
-    //  OG ALERT FUNCTIO
     private void showAccidentAlert() {
 
         accidentAlertActive = true;
 
-        AlertDialog.Builder builder =
-                new AlertDialog.Builder(this);
-
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
         builder.setTitle("Accident Detected!");
-        builder.setMessage("We detected a fall. Are you okay?");
+        builder.setMessage("We detected a crash. Are you okay?");
         builder.setCancelable(false);
 
-        builder.setPositiveButton("I'm Fine",
-                new DialogInterface.OnClickListener() {
-
-                    @Override
-                    public void onClick(DialogInterface dialog, int which) {
-
-                        accidentAlertActive = false;
-                        dialog.dismiss();
-
-                        Toast.makeText(MainActivity.this,
-                                "Glad you're okay!",
-                                Toast.LENGTH_SHORT).show();
-                    }
-                });
+        builder.setPositiveButton("I'm Fine", (dialog, which) -> {
+            accidentAlertActive = false;
+            dialog.dismiss();
+        });
 
         AlertDialog dialog = builder.create();
         dialog.show();
 
         alertHandler.postDelayed(() -> {
-
             if (accidentAlertActive) {
-
                 dialog.dismiss();
                 handleAccidentDetected();
-
                 accidentAlertActive = false;
             }
-
         }, 10000);
     }
-    /**
-     * Displays accident result including address and nearest hospital.
-     */
-    private void showAccidentResultDialog(
-            double lat,
-            double lon,
-            String address,
-            String hospitalInfo) {
 
-        AlertDialog.Builder builder =
-                new AlertDialog.Builder(this);
-
-        builder.setTitle("Accident Confirmed");
-
-        String message =
-                "Address:\n" + address + "\n\n"
-                        + "Nearest Hospital:\n"
-                        + hospitalInfo;
-
-        builder.setMessage(message);
-
-        builder.setPositiveButton("Open in Maps",
-                (dialog, which) -> {
-
-                    String uri =
-                            "https://maps.google.com/?q="
-                                    + lat + "," + lon;
-
-                    startActivity(new android.content.Intent(
-                            android.content.Intent.ACTION_VIEW,
-                            android.net.Uri.parse(uri)));
-                });
-
-        builder.setNegativeButton("Close",
-                (dialog, which) -> dialog.dismiss());
-
-        builder.show();
-    }
-
-    // loc thing
-    /**
-     * Called when accident is confirmed after sensor fusion.
-     * Retrieves GPS location, converts coordinates to address,
-     * finds nearest hospital, and displays result.
-     */
     private void handleAccidentDetected() {
-
-        Toast.makeText(this,
-                "Accident confirmed. Getting location...",
-                Toast.LENGTH_LONG).show();
 
         if (ActivityCompat.checkSelfPermission(this,
                 Manifest.permission.ACCESS_FINE_LOCATION)
@@ -312,51 +281,64 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         fusedLocationClient.getLastLocation()
                 .addOnSuccessListener(this, location -> {
 
-                    if (location != null) {
-
-                        double lat = location.getLatitude();
-                        double lon = location.getLongitude();
-
-                        Log.d("Location",
-                                "Lat: " + lat + " Lon: " + lon);
-
-                        // Run both API calls in background thread
-                        new Thread(() -> {
-
-                            // Step 1: Reverse Geocoding (Coordinates → Address)
-                            String address =
-                                    getAddressFromCoordinates(lat, lon);
-
-                            // Step 2: Find Nearest Hospital
-                            String hospitalList = findHospitalsInRange(lat, lon);
-
-                            // Step 3: Update UI safely
-                            runOnUiThread(() -> {
-
-                                showAccidentResultDialog(
-                                        lat,
-                                        lon,
-                                        address,
-                                        hospitalList
-                                );
-                            });
-
-                        }).start();
-
-                    } else {
+                    if (location == null) {
                         Toast.makeText(this,
                                 "Unable to fetch location",
                                 Toast.LENGTH_SHORT).show();
+                        return;
                     }
+
+                    double lat = location.getLatitude();
+                    double lon = location.getLongitude();
+
+                    new Thread(() -> {
+
+                        String address = getAddressFromCoordinates(lat, lon);
+                        String hospitalList = findHospitalsInRange(lat, lon);
+
+                        runOnUiThread(() -> {
+
+                            showAccidentResultDialog(lat, lon, address, hospitalList);
+                            sendAccidentSMS(lat, lon, address);
+
+                        });
+
+                    }).start();
                 });
     }
-    // speed mon
+
     private void startSpeedMonitoring() {
 
         LocationRequest locationRequest =
                 LocationRequest.create()
                         .setPriority(Priority.PRIORITY_HIGH_ACCURACY)
                         .setInterval(2000);
+
+        locationCallback = new LocationCallback() {
+
+            @Override
+            public void onLocationResult(LocationResult result) {
+
+                if (result == null) return;
+
+                for (Location location : result.getLocations()) {
+
+                    if (location.hasSpeed() && location.getAccuracy() < 20) {
+
+                        currentSpeed = location.getSpeed() * 3.6f;
+                        float speedDrop = previousSpeed - currentSpeed;
+
+                        if (previousSpeed > 40 &&
+                                speedDrop > SPEED_DROP_THRESHOLD) {
+
+                            speedDropTime = System.currentTimeMillis();
+                        }
+
+                        previousSpeed = currentSpeed;
+                    }
+                }
+            }
+        };
 
         if (ActivityCompat.checkSelfPermission(this,
                 Manifest.permission.ACCESS_FINE_LOCATION)
@@ -365,45 +347,10 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
         fusedLocationClient.requestLocationUpdates(
                 locationRequest,
-                new LocationCallback() {
-
-                    @Override
-                    public void onLocationResult(LocationResult result) {
-
-                        if (result == null) return;
-
-                        for (Location location :
-                                result.getLocations()) {
-
-                            currentSpeed =
-                                    location.getSpeed() * 3.6f;
-
-                            float speedDrop =
-                                    previousSpeed - currentSpeed;
-
-                            if (previousSpeed > 40 &&
-                                    speedDrop > SPEED_DROP_THRESHOLD) {
-
-                                speedDropDetected = true;
-
-                                Log.d("Accident",
-                                        "Speed drop detected");
-                            }
-
-                            previousSpeed = currentSpeed;
-
-                            Log.d("Speed",
-                                    "Speed: " + currentSpeed);
-                        }
-                    }
-                },
+                locationCallback,
                 Looper.getMainLooper());
     }
 
-    /**
-     * Converts latitude and longitude into a human-readable address
-     * using OpenStreetMap Nominatim reverse geocoding API.
-     */
     private String getAddressFromCoordinates(double lat, double lon) {
 
         try {
@@ -411,35 +358,22 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
             String urlString =
                     "https://nominatim.openstreetmap.org/reverse?format=json"
                             + "&lat=" + lat
-                            + "&lon=" + lon
-                            + "&zoom=18"
-                            + "&addressdetails=1";
-
-            URL url = new URL(urlString);
+                            + "&lon=" + lon;
 
             HttpURLConnection connection =
-                    (HttpURLConnection) url.openConnection();
+                    (HttpURLConnection) new URL(urlString).openConnection();
 
-            connection.setRequestMethod("GET");
-
-            // Required header for Nominatim API
-            connection.setRequestProperty(
-                    "User-Agent",
-                    "MajorProj123App");
+            connection.setRequestProperty("User-Agent", "MajorProj123App");
 
             BufferedReader reader =
                     new BufferedReader(
-                            new InputStreamReader(
-                                    connection.getInputStream()));
+                            new InputStreamReader(connection.getInputStream()));
 
-            StringBuilder response =
-                    new StringBuilder();
-
+            StringBuilder response = new StringBuilder();
             String line;
 
-            while ((line = reader.readLine()) != null) {
+            while ((line = reader.readLine()) != null)
                 response.append(line);
-            }
 
             reader.close();
 
@@ -455,95 +389,48 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         return "Address not available";
     }
 
-
-    /**
-     * Returns a formatted list of all hospitals
-     * within 5km of accident location.
-     */
-    private String findHospitalsInRange(double accidentLat,
-                                        double accidentLon) {
-
-        StringBuilder hospitalList =
-                new StringBuilder();
+    private String findHospitalsInRange(double lat, double lon) {
 
         try {
 
             String query =
                     "https://overpass-api.de/api/interpreter?data=" +
-                            "[out:json];node[\"amenity\"=\"hospital\"](around:50000," +
-                            accidentLat + "," + accidentLon + ");out;";
-
-            URL url = new URL(query);
+                            "[out:json];node[\"amenity\"=\"hospital\"](around:5000," +
+                            lat + "," + lon + ");out;";
 
             HttpURLConnection connection =
-                    (HttpURLConnection) url.openConnection();
-
-            connection.setRequestMethod("GET");
+                    (HttpURLConnection) new URL(query).openConnection();
 
             BufferedReader reader =
                     new BufferedReader(
-                            new InputStreamReader(
-                                    connection.getInputStream()));
+                            new InputStreamReader(connection.getInputStream()));
 
-            StringBuilder response =
-                    new StringBuilder();
-
+            StringBuilder response = new StringBuilder();
             String line;
 
-            while ((line = reader.readLine()) != null) {
+            while ((line = reader.readLine()) != null)
                 response.append(line);
-            }
 
             reader.close();
 
             JSONObject jsonObject =
                     new JSONObject(response.toString());
 
-            JSONArray elements =
-                    jsonObject.getJSONArray("elements");
+            JSONArray elements = jsonObject.getJSONArray("elements");
 
-            if (elements.length() == 0) {
+            if (elements.length() == 0)
                 return "No hospitals found within 5 km";
-            }
 
-            // Loop through ALL hospitals
+            StringBuilder hospitalList = new StringBuilder();
+
             for (int i = 0; i < elements.length(); i++) {
 
-                JSONObject hospital =
-                        elements.getJSONObject(i);
+                JSONObject hospital = elements.getJSONObject(i);
+                JSONObject tags = hospital.getJSONObject("tags");
 
-                double hospitalLat =
-                        hospital.getDouble("lat");
+                String name = tags.optString("name", "Unnamed Hospital");
 
-                double hospitalLon =
-                        hospital.getDouble("lon");
-
-                float[] results = new float[1];
-
-                // Calculate distance
-                Location.distanceBetween(
-                        accidentLat,
-                        accidentLon,
-                        hospitalLat,
-                        hospitalLon,
-                        results
-                );
-
-                double distanceKm =
-                        results[0] / 1000.0;
-
-                JSONObject tags =
-                        hospital.getJSONObject("tags");
-
-                String name =
-                        tags.optString("name",
-                                "Unnamed Hospital");
-
-                hospitalList.append("• ")
-                        .append(name)
-                        .append(" (")
-                        .append(String.format("%.2f", distanceKm))
-                        .append(" km)\n");
+                hospitalList.append("• ").append(name).append("\n");
             }
 
             return hospitalList.toString();
@@ -554,9 +441,74 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
         return "Error retrieving hospitals";
     }
+
+    private void sendAccidentSMS(double lat, double lon, String address) {
+
+        SharedPreferences prefs =
+                getSharedPreferences("EmergencyPrefs", MODE_PRIVATE);
+
+        String phone = prefs.getString("familyNumber", null);
+
+        if (phone == null) return;
+
+        String message =
+                "ACCIDENT ALERT!\n\n" +
+                        "The user may have been in an accident.\n\n" +
+                        "Location:\n" + address + "\n\n" +
+                        "https://maps.google.com/?q=" + lat + "," + lon;
+
+        try {
+
+            SmsManager smsManager = SmsManager.getDefault();
+
+            smsManager.sendTextMessage(phone,
+                    null,
+                    message,
+                    null,
+                    null);
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void showAccidentResultDialog(
+            double lat,
+            double lon,
+            String address,
+            String hospitalInfo) {
+
+        AlertDialog.Builder builder =
+                new AlertDialog.Builder(this);
+
+        builder.setTitle("Accident Confirmed");
+
+        String message =
+                "Address:\n" + address + "\n\n"
+                        + "Nearby Hospitals:\n" + hospitalInfo;
+
+        builder.setMessage(message);
+
+        builder.setPositiveButton("Open in Maps",
+                (dialog, which) -> {
+
+                    String uri =
+                            "https://maps.google.com/?q=" + lat + "," + lon;
+
+                    startActivity(new Intent(
+                            Intent.ACTION_VIEW,
+                            android.net.Uri.parse(uri)));
+                });
+
+        builder.setNegativeButton("Close",
+                (dialog, which) -> dialog.dismiss());
+
+        builder.show();
+    }
+
     @Override
     public void onAccuracyChanged(Sensor sensor, int accuracy) {}
-    // perm
+
     @Override
     public void onRequestPermissionsResult(
             int requestCode,
@@ -570,8 +522,8 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
         if (requestCode == 1 &&
                 grantResults.length > 0 &&
-                grantResults[0]
-                        == PackageManager.PERMISSION_GRANTED) {
+                grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+
             startSpeedMonitoring();
         }
     }
