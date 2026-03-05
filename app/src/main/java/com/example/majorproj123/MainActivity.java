@@ -502,21 +502,40 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
         if (phone == null) return;
 
-        String message =
-                "ACCIDENT ALERT!\n\n" +
-                        "The user may have been in an accident.\n\n" +
-                        "Location:\n" + address + "\n\n" +
-                        "https://maps.google.com/?q=" + lat + "," + lon;
-
         try {
 
             SmsManager smsManager = SmsManager.getDefault();
 
-            smsManager.sendTextMessage(phone,
+            // First SMS: Immediate alert
+            String alertMessage =
+                    "ACCIDENT ALERT!\n\n" +
+                            "A possible accident has been detected.\n" +
+                            "Location details will follow shortly.";
+
+            smsManager.sendTextMessage(
+                    phone,
+                    null,
+                    alertMessage,
+                    null,
+                    null
+            );
+
+            // Second SMS: Detailed information
+            String message =
+                    "Accident Details\n\n" +
+                            "Location:\n" + address + "\n\n" +
+                            "Google Maps:\n" +
+                            "https://maps.google.com/?q=" + lat + "," + lon;
+
+            smsManager.sendTextMessage(
+                    phone,
                     null,
                     message,
                     null,
-                    null);
+                    null
+            );
+
+            Log.d("ACCIDENT_SMS", "Accident alert and location SMS sent");
 
         } catch (Exception e) {
             e.printStackTrace();
