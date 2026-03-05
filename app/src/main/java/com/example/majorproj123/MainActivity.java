@@ -255,7 +255,15 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         builder.setCancelable(false);
 
         builder.setPositiveButton("I'm Fine", (dialog, which) -> {
+
             accidentAlertActive = false;
+
+            // Reset detection timestamps to prevent repeated alerts
+            freeFallTime = 0;
+            impactTime = 0;
+            rotationTime = 0;
+            speedDropTime = 0;
+
             dialog.dismiss();
         });
 
@@ -263,47 +271,90 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         dialog.show();
 
         alertHandler.postDelayed(() -> {
+
             if (accidentAlertActive) {
+
                 dialog.dismiss();
+
                 handleAccidentDetected();
+
                 accidentAlertActive = false;
+
+                // Reset timestamps after handling accident
+                freeFallTime = 0;
+                impactTime = 0;
+                rotationTime = 0;
+                speedDropTime = 0;
             }
-        }, 10000);
+
+        }, 10000); // waits 10 seconds for user response
     }
 
     private void handleAccidentDetected() {
 
         if (ActivityCompat.checkSelfPermission(this,
                 Manifest.permission.ACCESS_FINE_LOCATION)
-                != PackageManager.PERMISSION_GRANTED)
+                != PackageManager.PERMISSION_GRANTED) {
             return;
+        }
 
         fusedLocationClient.getLastLocation()
                 .addOnSuccessListener(this, location -> {
 
-                    if (location == null) {
+                    double lat = 0;
+                    double lon = 0;
+
+                    if (location != null) {
+                        lat = location.getLatitude();
+                        lon = location.getLongitude();
+                    } else {
                         Toast.makeText(this,
-                                "Unable to fetch location",
+                                "Location unavailable. Sending SMS without exact location.",
                                 Toast.LENGTH_SHORT).show();
-                        return;
                     }
 
-                    double lat = location.getLatitude();
-                    double lon = location.getLongitude();
+                    double finalLat = lat;
+                    double finalLon = lon;
 
                     new Thread(() -> {
 
-                        String address = getAddressFromCoordinates(lat, lon);
-                        String hospitalList = findHospitalsInRange(lat, lon);
+                        String address = "Location not available";
+                        String hospitalList = "Unable to retrieve nearby hospitals";
+
+                        if (finalLat != 0 && finalLon != 0) {
+                            address = getAddressFromCoordinates(finalLat, finalLon);
+                            hospitalList = findHospitalsInRange(finalLat, finalLon);
+                        }
+
+                        String finalAddress = address;
+                        String finalHospitalList = hospitalList;
 
                         runOnUiThread(() -> {
 
-                            showAccidentResultDialog(lat, lon, address, hospitalList);
-                            sendAccidentSMS(lat, lon, address);
+                            showAccidentResultDialog(
+                                    finalLat,
+                                    finalLon,
+                                    finalAddress,
+                                    finalHospitalList
+                            );
+
+                            sendAccidentSMS(
+                                    finalLat,
+                                    finalLon,
+                                    finalAddress
+                            );
 
                         });
 
                     }).start();
+                })
+                .addOnFailureListener(e -> {
+
+                    Toast.makeText(this,
+                            "Location fetch failed. Sending SMS.",
+                            Toast.LENGTH_SHORT).show();
+
+                    sendAccidentSMS(0, 0, "Location unavailable");
                 });
     }
 
