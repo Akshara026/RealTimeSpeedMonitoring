@@ -11,6 +11,8 @@ package com.example.majorproj123;
 // Hard braking → speed drop but no free fall → NOT accident
 // Shake phone → rotation but no impact → NOT accident
 
+
+
 import android.Manifest;
 import android.app.AlertDialog;
 import android.content.Context;
@@ -27,6 +29,13 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import android.widget.Toast;
+import android.net.Uri;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.widget.LinearLayout;
+import android.widget.TextView;
+import android.widget.Button;
+import android.location.Location;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
@@ -43,6 +52,7 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 
 import android.telephony.SmsManager;
+
 
 public class MainActivity extends AppCompatActivity implements SensorEventListener {
 
@@ -72,6 +82,11 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
     private float previousSpeed = 0f;
     private float currentSpeed = 0f;
+
+    // store nearest hospital coordinates for navigation
+    private double hospitalLatitude = 0;
+    private double hospitalLongitude = 0;
+
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -319,15 +334,16 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
                     new Thread(() -> {
 
                         String address = "Location not available";
-                        String hospitalList = "Unable to retrieve nearby hospitals";
+                        JSONArray hospitals = null;
 
                         if (finalLat != 0 && finalLon != 0) {
+
                             address = getAddressFromCoordinates(finalLat, finalLon);
-                            hospitalList = findHospitalsInRange(finalLat, finalLon);
+                            hospitals = findNearbyHospitals(finalLat, finalLon);
                         }
 
                         String finalAddress = address;
-                        String finalHospitalList = hospitalList;
+                        JSONArray finalHospitals = hospitals;
 
                         runOnUiThread(() -> {
 
@@ -335,7 +351,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
                                     finalLat,
                                     finalLon,
                                     finalAddress,
-                                    finalHospitalList
+                                    finalHospitals
                             );
 
                             sendAccidentSMS(
@@ -356,6 +372,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
                     sendAccidentSMS(0, 0, "Location unavailable");
                 });
+//        callEmergencyContact();
     }
 
     private void startSpeedMonitoring() {
@@ -440,17 +457,19 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         return "Address not available";
     }
 
-    private String findHospitalsInRange(double lat, double lon) {
+    private JSONArray findNearbyHospitals(double lat, double lon) {
 
         try {
 
             String query =
                     "https://overpass-api.de/api/interpreter?data=" +
-                            "[out:json];node[\"amenity\"=\"hospital\"](around:5000," +
+                            "[out:json];node[\"amenity\"=\"hospital\"](around:50000," +
                             lat + "," + lon + ");out;";
 
             HttpURLConnection connection =
                     (HttpURLConnection) new URL(query).openConnection();
+
+            connection.setRequestProperty("User-Agent", "MajorProj123App");
 
             BufferedReader reader =
                     new BufferedReader(
@@ -467,30 +486,85 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
             JSONObject jsonObject =
                     new JSONObject(response.toString());
 
-            JSONArray elements = jsonObject.getJSONArray("elements");
-
-            if (elements.length() == 0)
-                return "No hospitals found within 5 km";
-
-            StringBuilder hospitalList = new StringBuilder();
-
-            for (int i = 0; i < elements.length(); i++) {
-
-                JSONObject hospital = elements.getJSONObject(i);
-                JSONObject tags = hospital.getJSONObject("tags");
-
-                String name = tags.optString("name", "Unnamed Hospital");
-
-                hospitalList.append("• ").append(name).append("\n");
-            }
-
-            return hospitalList.toString();
+            return jsonObject.getJSONArray("elements");
 
         } catch (Exception e) {
             e.printStackTrace();
         }
 
-        return "Error retrieving hospitals";
+        return null;
+    }
+
+    private String buildHospitalList(JSONArray hospitals) {
+
+        if (hospitals == null || hospitals.length() == 0)
+            return "No hospitals found nearby";
+
+        StringBuilder list = new StringBuilder();
+
+        int limit = Math.min(5, hospitals.length());
+
+        for (int i = 0; i < limit; i++) {
+
+            try {
+
+                JSONObject hospital = hospitals.getJSONObject(i);
+                JSONObject tags = hospital.getJSONObject("tags");
+
+                String name = tags.optString("name", "Unnamed Hospital");
+
+                // try multiple phone tags
+                String phone = tags.optString("phone",
+                        tags.optString("contact:phone", "Not available"));
+
+                double lat = hospital.getDouble("lat");
+                double lon = hospital.getDouble("lon");
+
+                if (i == 0) {
+                    hospitalLatitude = lat;
+                    hospitalLongitude = lon;
+                }
+
+                list.append(i + 1)
+                        .append(". ")
+                        .append(name)
+                        .append("\nPhone: ")
+                        .append(phone)
+                        .append("\n\n");
+
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+
+        return list.toString();
+    }
+    /*
+     * Extracts hospital name and coordinates
+     * and formats them for display
+     */
+    private String getHospitalInfo(JSONObject hospital) {
+
+        try {
+
+            JSONObject tags = hospital.getJSONObject("tags");
+
+            String name = tags.optString("name", "Unnamed Hospital");
+
+            double lat = hospital.getDouble("lat");
+            double lon = hospital.getDouble("lon");
+
+            // Store hospital coordinates globally for navigation
+            hospitalLatitude = lat;
+            hospitalLongitude = lon;
+
+            return name;
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+        return "Hospital info unavailable";
     }
 
     private void sendAccidentSMS(double lat, double lon, String address) {
@@ -542,40 +616,202 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         }
     }
 
+    private void callEmergencyContact() {
+
+        SharedPreferences prefs =
+                getSharedPreferences("EmergencyPrefs", MODE_PRIVATE);
+
+        String phone = prefs.getString("familyNumber", null);
+
+        if (phone == null) {
+            Toast.makeText(this,
+                    "No emergency contact saved",
+                    Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        try {
+
+            Intent callIntent = new Intent(Intent.ACTION_CALL);
+            callIntent.setData(android.net.Uri.parse("tel:" + phone));
+
+            if (ActivityCompat.checkSelfPermission(this,
+                    Manifest.permission.CALL_PHONE)
+                    != PackageManager.PERMISSION_GRANTED) {
+
+                ActivityCompat.requestPermissions(this,
+                        new String[]{Manifest.permission.CALL_PHONE}, 3);
+                return;
+            }
+
+            startActivity(callIntent);
+
+        } catch (Exception e) {
+
+            Toast.makeText(this,
+                    "Call failed: " + e.getMessage(),
+                    Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void callHospital(String phone) {
+
+        if (phone == null || phone.equals("Not available")) {
+
+            Toast.makeText(this,
+                    "Phone number unavailable",
+                    Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        Intent callIntent = new Intent(Intent.ACTION_CALL);
+        callIntent.setData(Uri.parse("tel:" + phone));
+
+        if (ActivityCompat.checkSelfPermission(this,
+                Manifest.permission.CALL_PHONE)
+                != PackageManager.PERMISSION_GRANTED) {
+
+            ActivityCompat.requestPermissions(this,
+                    new String[]{Manifest.permission.CALL_PHONE}, 6);
+            return;
+        }
+
+        startActivity(callIntent);
+    }
+    /*
+     * This method displays a dialog when an accident is confirmed.
+     *
+     * It shows:
+     * 1. The accident address
+     * 2. Nearby hospitals
+     *
+     * It also provides 3 options:
+     * - Call emergency ambulance (108)
+     * - Navigate to hospital using Google Maps
+     * - Close the dialog
+     */
     private void showAccidentResultDialog(
             double lat,
             double lon,
             String address,
-            String hospitalInfo) {
+            JSONArray hospitals) {
 
-        AlertDialog.Builder builder =
-                new AlertDialog.Builder(this);
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
 
-        builder.setTitle("Accident Confirmed");
+        LayoutInflater inflater = getLayoutInflater();
+        View view = inflater.inflate(R.layout.dialog_hospitals, null);
 
-        String message =
-                "Address:\n" + address + "\n\n"
-                        + "Nearby Hospitals:\n" + hospitalInfo;
+        LinearLayout hospitalContainer =
+                view.findViewById(R.id.hospitalContainer);
 
-        builder.setMessage(message);
+        TextView addressText =
+                view.findViewById(R.id.addressText);
 
-        builder.setPositiveButton("Open in Maps",
-                (dialog, which) -> {
+        addressText.setText("Address:\n" + address);
 
-                    String uri =
-                            "https://maps.google.com/?q=" + lat + "," + lon;
+        try {
 
-                    startActivity(new Intent(
-                            Intent.ACTION_VIEW,
-                            android.net.Uri.parse(uri)));
-                });
+            if (hospitals != null) {
 
-        builder.setNegativeButton("Close",
-                (dialog, which) -> dialog.dismiss());
+                int limit = Math.min(5, hospitals.length());
+
+                for (int i = 0; i < limit; i++) {
+
+                    JSONObject hospital = hospitals.getJSONObject(i);
+                    JSONObject tags = hospital.getJSONObject("tags");
+
+                    String name =
+                            tags.optString("name", "Unnamed Hospital");
+
+                    String phone =
+                            tags.optString("phone",
+                                    tags.optString("contact:phone", ""));
+
+                    double hLat = hospital.getDouble("lat");
+                    double hLon = hospital.getDouble("lon");
+
+                    View item =
+                            inflater.inflate(R.layout.hospital_item, null);
+                    TextView hospitalName = item.findViewById(R.id.hospitalName);
+                    TextView hospitalDistance = item.findViewById(R.id.hospitalDistance);
+
+                    Button callBtn = item.findViewById(R.id.callBtn);
+                    Button navBtn = item.findViewById(R.id.navBtn);
+                    float[] results = new float[1];
+
+                    Location.distanceBetween(
+                            lat,
+                            lon,
+                            hLat,
+                            hLon,
+                            results
+                    );
+
+                    float distanceKm = results[0] / 1000f;
+
+                    hospitalDistance.setText(String.format("%.2f km away", distanceKm));
+
+                    hospitalName.setText(name);
+
+                    // CALL BUTTON
+                    callBtn.setOnClickListener(v -> {
+
+                        if (phone.isEmpty()) {
+
+                            Toast.makeText(this,
+                                    "Phone number unavailable",
+                                    Toast.LENGTH_SHORT).show();
+                            return;
+                        }
+
+                        Intent callIntent =
+                                new Intent(Intent.ACTION_CALL);
+
+                        callIntent.setData(Uri.parse("tel:" + phone));
+
+                        startActivity(callIntent);
+                    });
+
+                    // NAVIGATION BUTTON
+                    navBtn.setOnClickListener(v -> {
+
+                        String uri =
+                                "google.navigation:q=" + hLat + "," + hLon;
+
+                        Intent intent =
+                                new Intent(Intent.ACTION_VIEW,
+                                        Uri.parse(uri));
+
+                        intent.setPackage(
+                                "com.google.android.apps.maps");
+
+                        startActivity(intent);
+                    });
+
+                    hospitalContainer.addView(item);
+                }
+            }
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+        builder.setView(view);
+
+        builder.setPositiveButton("Call Emergency (108)", (d,w)->{
+
+            Intent callIntent =
+                    new Intent(Intent.ACTION_CALL);
+
+            callIntent.setData(Uri.parse("tel:108"));
+
+            startActivity(callIntent);
+        });
+
+        builder.setNegativeButton("Close", (d,w)->d.dismiss());
 
         builder.show();
     }
-
     @Override
     public void onAccuracyChanged(Sensor sensor, int accuracy) {}
 
@@ -596,5 +832,12 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
             startSpeedMonitoring();
         }
+        if (requestCode == 3 &&
+                grantResults.length > 0 &&
+                grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+
+            callEmergencyContact();
+        }
     }
+
 }
