@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "874755859885",
+    "project_id": "accidentdetectionapp-6a919",
+    "storage_bucket": "accidentdetectionapp-6a919.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:874755859885:android:b82e8f10a0a99ca6b82d24",
+        "android_client_info": {
+          "package_name": "com.example.majorproj123"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAFTjYmBgZB1n0qJlwURULHQzMXTPX8KoQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

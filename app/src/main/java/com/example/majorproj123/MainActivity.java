@@ -42,6 +42,8 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 
 import com.google.android.gms.location.*;
+import com.google.firebase.database.DatabaseReference;
+import com.google.firebase.database.FirebaseDatabase;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -54,6 +56,7 @@ import java.net.URL;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.Locale;
 
 import android.telephony.SmsManager;
@@ -96,6 +99,14 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        FirebaseDatabase.getInstance("https://accidentdetectionapp-6a919-default-rtdb.asia-southeast1.firebasedatabase.app")
+                .getReference("test")
+                .setValue("hello");
+        FirebaseDatabase.getInstance("https://accidentdetectionapp-6a919-default-rtdb.asia-southeast1.firebasedatabase.app")
+                .getReference("ping")
+                .setValue("alive")
+                .addOnSuccessListener(a -> Log.d("FB", "Firebase write OK"))
+                .addOnFailureListener(e -> Log.e("FB", "Firebase write FAILED: " + e.getMessage()));
 
         SharedPreferences prefs =
                 getSharedPreferences("EmergencyPrefs", MODE_PRIVATE);
@@ -385,6 +396,100 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 //                });
 ////        callEmergencyContact();
 //    }
+//private void handleAccidentDetected() {
+//
+//    if (ActivityCompat.checkSelfPermission(this,
+//            Manifest.permission.ACCESS_FINE_LOCATION)
+//            != PackageManager.PERMISSION_GRANTED) {
+//        return;
+//    }
+//
+//    fusedLocationClient.getLastLocation()
+//            .addOnSuccessListener(this, location -> {
+//
+//                double lat = 0;
+//                double lon = 0;
+//
+//                if (location != null) {
+//                    lat = location.getLatitude();
+//                    lon = location.getLongitude();
+//                } else {
+//                    Toast.makeText(this,
+//                            "Location unavailable. Sending SMS without exact location.",
+//                            Toast.LENGTH_SHORT).show();
+//                }
+//
+//                double finalLat = lat;
+//                double finalLon = lon;
+//
+//                new Thread(() -> {
+//
+//                    String address = "Location not available";
+//                    JSONArray hospitals = null;
+//
+//                    if (finalLat != 0 && finalLon != 0) {
+//
+//                        address = getAddressFromCoordinates(finalLat, finalLon);
+//                        hospitals = findNearbyHospitals(finalLat, finalLon);
+//                    }
+//
+//                    String finalAddress = address;
+//                    JSONArray finalHospitals = hospitals;
+//
+//                    runOnUiThread(() -> {
+//
+//                        showAccidentResultDialog(
+//                                finalLat,
+//                                finalLon,
+//                                finalAddress,
+//                                finalHospitals
+//                        );
+//
+//                        // SAVE BLACK BOX DATA
+//                        saveCrashLog(
+//                                finalLat,
+//                                finalLon,
+//                                finalAddress
+//                        );
+//                        //fire base ka
+//                        DatabaseReference ref = FirebaseDatabase
+//                                .getInstance()
+//                                .getReference("crashes");
+//
+//                        HashMap<String, Object> crashData = new HashMap<>();
+//
+//                        crashData.put("speed_before", previousSpeed);
+//                        crashData.put("speed_after", currentSpeed);
+//                        crashData.put("latitude", finalLat);
+//                        crashData.put("longitude", finalLon);
+//                        crashData.put("address", finalAddress);
+//
+//                        ref.push().setValue(crashData);
+//
+//                        // SEND SMS ALERT
+//                        sendAccidentSMS(
+//                                finalLat,
+//                                finalLon,
+//                                finalAddress
+//                        );
+//
+//                    });
+//
+//                }).start();
+//            })
+//            .addOnFailureListener(e -> {
+//
+//                Toast.makeText(this,
+//                        "Location fetch failed. Sending SMS.",
+//                        Toast.LENGTH_SHORT).show();
+//
+//                // SAVE BLACK BOX EVEN IF LOCATION FAILS
+//                saveCrashLog(0, 0, "Location unavailable");
+//
+//                sendAccidentSMS(0, 0, "Location unavailable");
+//            });
+//}
+
 private void handleAccidentDetected() {
 
     if (ActivityCompat.checkSelfPermission(this,
@@ -417,7 +522,6 @@ private void handleAccidentDetected() {
                     JSONArray hospitals = null;
 
                     if (finalLat != 0 && finalLon != 0) {
-
                         address = getAddressFromCoordinates(finalLat, finalLon);
                         hospitals = findNearbyHospitals(finalLat, finalLon);
                     }
@@ -427,6 +531,7 @@ private void handleAccidentDetected() {
 
                     runOnUiThread(() -> {
 
+                        // Show hospital dialog
                         showAccidentResultDialog(
                                 finalLat,
                                 finalLon,
@@ -434,19 +539,31 @@ private void handleAccidentDetected() {
                                 finalHospitals
                         );
 
-                        // SAVE BLACK BOX DATA
-                        saveCrashLog(
-                                finalLat,
-                                finalLon,
-                                finalAddress
-                        );
+                        // Save black box locally
+                        saveCrashLog(finalLat, finalLon, finalAddress);
 
-                        // SEND SMS ALERT
-                        sendAccidentSMS(
-                                finalLat,
-                                finalLon,
-                                finalAddress
-                        );
+                        // Upload crash to Firebase
+                        DatabaseReference ref = FirebaseDatabase
+                                .getInstance("https://accidentdetectionapp-6a919-default-rtdb.asia-southeast1.firebasedatabase.app")
+                                .getReference("crashes");
+
+                        HashMap<String, Object> crashData = new HashMap<>();
+
+                        crashData.put("speed_before", previousSpeed);
+                        crashData.put("speed_after", currentSpeed);
+                        crashData.put("latitude", finalLat);
+                        crashData.put("longitude", finalLon);
+                        crashData.put("address", finalAddress);
+                        crashData.put("timestamp", System.currentTimeMillis());
+
+                        ref.push().setValue(crashData)
+                                .addOnSuccessListener(aVoid ->
+                                        Log.d("FIREBASE_UPLOAD", "Crash uploaded successfully"))
+                                .addOnFailureListener(e ->
+                                        Log.e("FIREBASE_UPLOAD", "Upload failed", e));
+
+                        // Send SMS alert
+                        sendAccidentSMS(finalLat, finalLon, finalAddress);
 
                     });
 
@@ -458,7 +575,6 @@ private void handleAccidentDetected() {
                         "Location fetch failed. Sending SMS.",
                         Toast.LENGTH_SHORT).show();
 
-                // SAVE BLACK BOX EVEN IF LOCATION FAILS
                 saveCrashLog(0, 0, "Location unavailable");
 
                 sendAccidentSMS(0, 0, "Location unavailable");
@@ -1053,6 +1169,7 @@ private void saveCrashLog(double lat, double lon, String address) {
                 grantResults[0] == PackageManager.PERMISSION_GRANTED) {
 
             startSpeedMonitoring();
+
         }
         if (requestCode == 3 &&
                 grantResults.length > 0 &&
