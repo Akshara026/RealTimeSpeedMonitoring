@@ -47,9 +47,14 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
+import java.io.FileOutputStream;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.Locale;
 
 import android.telephony.SmsManager;
 
@@ -305,76 +310,160 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         }, 10000); // waits 10 seconds for user response
     }
 
-    private void handleAccidentDetected() {
+//    private void handleAccidentDetected() {
+//
+//        if (ActivityCompat.checkSelfPermission(this,
+//                Manifest.permission.ACCESS_FINE_LOCATION)
+//                != PackageManager.PERMISSION_GRANTED) {
+//            return;
+//        }
+//
+//        fusedLocationClient.getLastLocation()
+//                .addOnSuccessListener(this, location -> {
+//
+//                    double lat = 0;
+//                    double lon = 0;
+//
+//                    if (location != null) {
+//                        lat = location.getLatitude();
+//                        lon = location.getLongitude();
+//                    } else {
+//                        Toast.makeText(this,
+//                                "Location unavailable. Sending SMS without exact location.",
+//                                Toast.LENGTH_SHORT).show();
+//                    }
+//
+//                    double finalLat = lat;
+//                    double finalLon = lon;
+//
+//                    new Thread(() -> {
+//
+//                        String address = "Location not available";
+//                        JSONArray hospitals = null;
+//
+//                        if (finalLat != 0 && finalLon != 0) {
+//
+//                            address = getAddressFromCoordinates(finalLat, finalLon);
+//                            hospitals = findNearbyHospitals(finalLat, finalLon);
+//                        }
+//
+//                        String finalAddress = address;
+//                        JSONArray finalHospitals = hospitals;
+//
+//                        runOnUiThread(() -> {
+//
+//                            showAccidentResultDialog(
+//                                    finalLat,
+//                                    finalLon,
+//                                    finalAddress,
+//                                    finalHospitals
+//                            );
+//                            saveCrashLog(
+//                                    finalLat,
+//                                    finalLon,
+//                                    finalAddress
+//                            );
+//
+//
+//                            sendAccidentSMS(
+//                                    finalLat,
+//                                    finalLon,
+//                                    finalAddress
+//                            );
+//
+//                        });
+//
+//                    }).start();
+//                })
+//                .addOnFailureListener(e -> {
+//
+//                    Toast.makeText(this,
+//                            "Location fetch failed. Sending SMS.",
+//                            Toast.LENGTH_SHORT).show();
+//
+//                    sendAccidentSMS(0, 0, "Location unavailable");
+//                });
+////        callEmergencyContact();
+//    }
+private void handleAccidentDetected() {
 
-        if (ActivityCompat.checkSelfPermission(this,
-                Manifest.permission.ACCESS_FINE_LOCATION)
-                != PackageManager.PERMISSION_GRANTED) {
-            return;
-        }
-
-        fusedLocationClient.getLastLocation()
-                .addOnSuccessListener(this, location -> {
-
-                    double lat = 0;
-                    double lon = 0;
-
-                    if (location != null) {
-                        lat = location.getLatitude();
-                        lon = location.getLongitude();
-                    } else {
-                        Toast.makeText(this,
-                                "Location unavailable. Sending SMS without exact location.",
-                                Toast.LENGTH_SHORT).show();
-                    }
-
-                    double finalLat = lat;
-                    double finalLon = lon;
-
-                    new Thread(() -> {
-
-                        String address = "Location not available";
-                        JSONArray hospitals = null;
-
-                        if (finalLat != 0 && finalLon != 0) {
-
-                            address = getAddressFromCoordinates(finalLat, finalLon);
-                            hospitals = findNearbyHospitals(finalLat, finalLon);
-                        }
-
-                        String finalAddress = address;
-                        JSONArray finalHospitals = hospitals;
-
-                        runOnUiThread(() -> {
-
-                            showAccidentResultDialog(
-                                    finalLat,
-                                    finalLon,
-                                    finalAddress,
-                                    finalHospitals
-                            );
-
-                            sendAccidentSMS(
-                                    finalLat,
-                                    finalLon,
-                                    finalAddress
-                            );
-
-                        });
-
-                    }).start();
-                })
-                .addOnFailureListener(e -> {
-
-                    Toast.makeText(this,
-                            "Location fetch failed. Sending SMS.",
-                            Toast.LENGTH_SHORT).show();
-
-                    sendAccidentSMS(0, 0, "Location unavailable");
-                });
-//        callEmergencyContact();
+    if (ActivityCompat.checkSelfPermission(this,
+            Manifest.permission.ACCESS_FINE_LOCATION)
+            != PackageManager.PERMISSION_GRANTED) {
+        return;
     }
 
+    fusedLocationClient.getLastLocation()
+            .addOnSuccessListener(this, location -> {
+
+                double lat = 0;
+                double lon = 0;
+
+                if (location != null) {
+                    lat = location.getLatitude();
+                    lon = location.getLongitude();
+                } else {
+                    Toast.makeText(this,
+                            "Location unavailable. Sending SMS without exact location.",
+                            Toast.LENGTH_SHORT).show();
+                }
+
+                double finalLat = lat;
+                double finalLon = lon;
+
+                new Thread(() -> {
+
+                    String address = "Location not available";
+                    JSONArray hospitals = null;
+
+                    if (finalLat != 0 && finalLon != 0) {
+
+                        address = getAddressFromCoordinates(finalLat, finalLon);
+                        hospitals = findNearbyHospitals(finalLat, finalLon);
+                    }
+
+                    String finalAddress = address;
+                    JSONArray finalHospitals = hospitals;
+
+                    runOnUiThread(() -> {
+
+                        showAccidentResultDialog(
+                                finalLat,
+                                finalLon,
+                                finalAddress,
+                                finalHospitals
+                        );
+
+                        // SAVE BLACK BOX DATA
+                        saveCrashLog(
+                                finalLat,
+                                finalLon,
+                                finalAddress
+                        );
+
+                        // SEND SMS ALERT
+                        sendAccidentSMS(
+                                finalLat,
+                                finalLon,
+                                finalAddress
+                        );
+
+                    });
+
+                }).start();
+            })
+            .addOnFailureListener(e -> {
+
+                Toast.makeText(this,
+                        "Location fetch failed. Sending SMS.",
+                        Toast.LENGTH_SHORT).show();
+
+                // SAVE BLACK BOX EVEN IF LOCATION FAILS
+                saveCrashLog(0, 0, "Location unavailable");
+
+                sendAccidentSMS(0, 0, "Location unavailable");
+            });
+}
     private void startSpeedMonitoring() {
 
         LocationRequest locationRequest =
@@ -567,6 +656,55 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         return "Hospital info unavailable";
     }
 
+//    private void sendAccidentSMS(double lat, double lon, String address) {
+//
+//        SharedPreferences prefs =
+//                getSharedPreferences("EmergencyPrefs", MODE_PRIVATE);
+//
+//        String phone = prefs.getString("familyNumber", null);
+//
+//        if (phone == null) return;
+//
+//        try {
+//
+//            SmsManager smsManager = SmsManager.getDefault();
+//
+//            // First SMS: Immediate alert
+//            String alertMessage =
+//                    "ACCIDENT ALERT!\n\n" +
+//                            "A possible accident has been detected.\n" +
+//                            "Location details will follow shortly.";
+//
+//            smsManager.sendTextMessage(
+//                    phone,
+//                    null,
+//                    alertMessage,
+//                    null,
+//                    null
+//            );
+//
+//            // Second SMS: Detailed information
+//            String message =
+//                    "Accident Details\n\n" +
+//                            "Location:\n" + address + "\n\n" +
+//                            "Google Maps:\n" +
+//                            "https://maps.google.com/?q=" + lat + "," + lon;
+//
+//            smsManager.sendTextMessage(
+//                    phone,
+//                    null,
+//                    message,
+//                    null,
+//                    null
+//            );
+//
+//            Log.d("ACCIDENT_SMS", "Accident alert and location SMS sent");
+//
+//        } catch (Exception e) {
+//            e.printStackTrace();
+//        }
+//    }
+
     private void sendAccidentSMS(double lat, double lon, String address) {
 
         SharedPreferences prefs =
@@ -578,44 +716,128 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
         try {
 
-            SmsManager smsManager = SmsManager.getDefault();
+            SmsManager smsManager =
+                    SmsManager.getSmsManagerForSubscriptionId(
+                            SmsManager.getDefaultSmsSubscriptionId());
 
-            // First SMS: Immediate alert
+            float speedDrop = previousSpeed - currentSpeed;
+
+            // SMS 1
             String alertMessage =
                     "ACCIDENT ALERT!\n\n" +
-                            "A possible accident has been detected.\n" +
-                            "Location details will follow shortly.";
+                            "A possible accident has been detected.";
 
-            smsManager.sendTextMessage(
-                    phone,
-                    null,
-                    alertMessage,
-                    null,
-                    null
-            );
+            smsManager.sendTextMessage(phone, null, alertMessage, null, null);
 
-            // Second SMS: Detailed information
+            // SMS 2 (BLACK BOX)
             String message =
-                    "Accident Details\n\n" +
+                    "Crash Report\n\n" +
+                            "Speed Before Crash: " + previousSpeed + " km/h\n" +
+                            "Speed After Crash: " + currentSpeed + " km/h\n" +
+                            "Speed Drop: " + speedDrop + " km/h\n\n" +
                             "Location:\n" + address + "\n\n" +
                             "Google Maps:\n" +
                             "https://maps.google.com/?q=" + lat + "," + lon;
 
-            smsManager.sendTextMessage(
-                    phone,
-                    null,
-                    message,
-                    null,
-                    null
-            );
+            ArrayList<String> parts = smsManager.divideMessage(message);
 
-            Log.d("ACCIDENT_SMS", "Accident alert and location SMS sent");
+            smsManager.sendMultipartTextMessage(phone, null, parts, null, null);
+
+            Log.d("ACCIDENT_SMS", "Accident SMS + blackbox sent");
 
         } catch (Exception e) {
             e.printStackTrace();
         }
     }
 
+//    private void saveCrashLog(double lat, double lon, String address) {
+//
+//        try {
+//
+//            SimpleDateFormat dateFormat =
+//                    new SimpleDateFormat("dd-MM-yyyy HH:mm:ss", Locale.getDefault());
+//
+//            String time = dateFormat.format(new Date());
+//
+//            float speedDrop = previousSpeed - currentSpeed;
+//
+//            String log =
+//                    "\n------------------------------\n" +
+//                            "ACCIDENT BLACK BOX REPORT\n" +
+//                            "Time: " + time + "\n\n" +
+//
+//                            "Speed Before Crash: " + previousSpeed + " km/h\n" +
+//                            "Speed After Crash: " + currentSpeed + " km/h\n" +
+//                            "Speed Drop: " + speedDrop + " km/h\n\n" +
+//
+//                            "Free Fall Detected: YES\n" +
+//                            "Impact Detected: YES\n" +
+//                            "Rotation Detected: YES\n\n" +
+//
+//                            "Latitude: " + lat + "\n" +
+//                            "Longitude: " + lon + "\n" +
+//                            "Address: " + address + "\n" +
+//
+//                            "Google Maps:\n" +
+//                            "https://maps.google.com/?q=" + lat + "," + lon + "\n" +
+//                            "------------------------------\n";
+//
+//            FileOutputStream fos =
+//                    openFileOutput("accident_logs.txt", Context.MODE_APPEND);
+//
+//            fos.write(log.getBytes());
+//            fos.close();
+//
+//            Log.d("BLACKBOX", "Crash log saved");
+//
+//        } catch (Exception e) {
+//            e.printStackTrace();
+//        }
+//    }
+private void saveCrashLog(double lat, double lon, String address) {
+
+    try {
+
+        SimpleDateFormat dateFormat =
+                new SimpleDateFormat("dd-MM-yyyy HH:mm:ss", Locale.getDefault());
+
+        String time = dateFormat.format(new Date());
+
+        float speedDrop = previousSpeed - currentSpeed;
+
+        String log =
+                "\n------------------------------\n" +
+                        "ACCIDENT BLACK BOX REPORT\n" +
+                        "Time: " + time + "\n\n" +
+
+                        "Speed Before Crash: " + previousSpeed + " km/h\n" +
+                        "Speed After Crash: " + currentSpeed + " km/h\n" +
+                        "Speed Drop: " + speedDrop + " km/h\n\n" +
+
+                        "Free Fall Detected: YES\n" +
+                        "Impact Detected: YES\n" +
+                        "Rotation Detected: YES\n\n" +
+
+                        "Latitude: " + lat + "\n" +
+                        "Longitude: " + lon + "\n" +
+                        "Address: " + address + "\n" +
+
+                        "Google Maps:\n" +
+                        "https://maps.google.com/?q=" + lat + "," + lon + "\n" +
+                        "------------------------------\n";
+
+        FileOutputStream fos =
+                openFileOutput("accident_logs.txt", Context.MODE_APPEND);
+
+        fos.write(log.getBytes());
+        fos.close();
+
+        Log.d("BLACKBOX", "Crash log saved");
+
+    } catch (Exception e) {
+        e.printStackTrace();
+    }
+}
     private void callEmergencyContact() {
 
         SharedPreferences prefs =
