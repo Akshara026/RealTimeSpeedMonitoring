@@ -24,10 +24,13 @@ import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.location.Location;
+import android.location.LocationListener;
+import android.location.LocationManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
+import android.view.ViewGroup;
 import android.widget.Toast;
 import android.net.Uri;
 import android.view.LayoutInflater;
@@ -42,6 +45,7 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 
 import com.google.android.gms.location.*;
+import com.google.android.gms.location.LocationRequest;
 import com.google.firebase.database.DatabaseReference;
 import com.google.firebase.database.FirebaseDatabase;
 
@@ -58,7 +62,10 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Locale;
-
+import android.location.*;
+import android.Manifest;
+import android.content.pm.PackageManager;
+import androidx.core.app.ActivityCompat;
 import android.telephony.SmsManager;
 
 
@@ -67,7 +74,9 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     private SensorManager sensorManager;
     private Sensor accelerometer;
     private Sensor gyroscope;
-
+    private LocationManager locationManager;
+    private LocationListener locationListener;
+    private TextView speedText;
     private FusedLocationProviderClient fusedLocationClient;
     private LocationCallback locationCallback;
 
@@ -116,8 +125,44 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
             finish();
             return;
         }
-
         setContentView(R.layout.activity_main);
+        TextView speedText;
+//        speedText = findViewById(R.id.speedText);
+        speedText = findViewById(R.id.speedText);
+
+        locationManager = (LocationManager) getSystemService(LOCATION_SERVICE);
+
+        locationListener = new LocationListener() {
+            @Override
+            public void onLocationChanged(Location location) {
+
+                float speed = location.getSpeed(); // m/s
+                float speedKmh = speed * 3.6f;
+
+                if (speedText != null) {
+                    speedText.setText(String.format("%.2f km/h", speed));
+                }
+            }
+
+            @Override public void onStatusChanged(String provider, int status, Bundle extras) {}
+            @Override public void onProviderEnabled(String provider) {}
+            @Override public void onProviderDisabled(String provider) {}
+        };
+        if (ActivityCompat.checkSelfPermission(this,
+                Manifest.permission.ACCESS_FINE_LOCATION)
+                != PackageManager.PERMISSION_GRANTED) {
+
+            ActivityCompat.requestPermissions(this,
+                    new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, 1);
+        } else {
+            locationManager.requestLocationUpdates(
+                    LocationManager.GPS_PROVIDER,
+                    1000,
+                    1,
+                    locationListener
+            );
+        }
+
 
         findViewById(R.id.btnTestSMS).setOnClickListener(v -> {
             testSMSFunctionality();
@@ -280,47 +325,76 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
         accidentAlertActive = true;
 
-        AlertDialog.Builder builder = new AlertDialog.Builder(this);
-        builder.setTitle("Accident Detected!");
-        builder.setMessage("We detected a crash. Are you okay?");
-        builder.setCancelable(false);
+        LayoutInflater inflater = getLayoutInflater();
+        View view = inflater.inflate(R.layout.dialog_accident, null);
 
-        builder.setPositiveButton("I'm Fine", (dialog, which) -> {
+        TextView countdownText = view.findViewById(R.id.countdownText);
+        Button btnSafe = view.findViewById(R.id.btnSafe);
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setView(view)
+                .setCancelable(false)
+                .create();
+
+        dialog.show();
+
+        if (dialog.getWindow() != null) {
+            dialog.getWindow().setBackgroundDrawableResource(android.R.color.transparent);
+        }
+
+        final int[] countdown = {10};
+
+        Handler handler = new Handler(Looper.getMainLooper());
+
+        Runnable runnable = new Runnable() {
+            @Override
+            public void run() {
+
+                if (!accidentAlertActive) return;
+
+                countdownText.setText(String.valueOf(countdown[0]));
+                countdownText.animate()
+                        .scaleX(1.2f)
+                        .scaleY(1.2f)
+                        .setDuration(300)
+                        .withEndAction(() -> {
+                            countdownText.setScaleX(1f);
+                            countdownText.setScaleY(1f);
+                        });
+                countdown[0]--;
+
+                if (countdown[0] >= 0) {
+                    handler.postDelayed(this, 1000);
+                } else {
+
+                    dialog.dismiss();
+
+                    if (accidentAlertActive) {
+                        handleAccidentDetected();
+                        accidentAlertActive = false;
+
+                        freeFallTime = 0;
+                        impactTime = 0;
+                        rotationTime = 0;
+                        speedDropTime = 0;
+                    }
+                }
+            }
+        };
+
+        handler.post(runnable);
+
+        btnSafe.setOnClickListener(v -> {
 
             accidentAlertActive = false;
+            dialog.dismiss();
 
-            // Reset detection timestamps to prevent repeated alerts
             freeFallTime = 0;
             impactTime = 0;
             rotationTime = 0;
             speedDropTime = 0;
-
-            dialog.dismiss();
         });
-
-        AlertDialog dialog = builder.create();
-        dialog.show();
-
-        alertHandler.postDelayed(() -> {
-
-            if (accidentAlertActive) {
-
-                dialog.dismiss();
-
-                handleAccidentDetected();
-
-                accidentAlertActive = false;
-
-                // Reset timestamps after handling accident
-                freeFallTime = 0;
-                impactTime = 0;
-                rotationTime = 0;
-                speedDropTime = 0;
-            }
-
-        }, 10000); // waits 10 seconds for user response
     }
-
 //    private void handleAccidentDetected() {
 //
 //        if (ActivityCompat.checkSelfPermission(this,
@@ -1028,127 +1102,137 @@ private void saveCrashLog(double lat, double lon, String address) {
      * - Navigate to hospital using Google Maps
      * - Close the dialog
      */
-    private void showAccidentResultDialog(
-            double lat,
-            double lon,
-            String address,
-            JSONArray hospitals) {
-
-        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+    private void showAccidentResultDialog(double lat, double lon, String address, JSONArray hospitals) {
 
         LayoutInflater inflater = getLayoutInflater();
         View view = inflater.inflate(R.layout.dialog_hospitals, null);
 
-        LinearLayout hospitalContainer =
-                view.findViewById(R.id.hospitalContainer);
+        TextView addressText = view.findViewById(R.id.addressText);
+        LinearLayout hospitalContainer = view.findViewById(R.id.hospitalContainer);
 
-        TextView addressText =
-                view.findViewById(R.id.addressText);
-
+        //  Set address
         addressText.setText("Address:\n" + address);
 
+        //  Loop hospitals
         try {
+            int limit = Math.min(5, hospitals.length());
 
-            if (hospitals != null) {
+            for (int i = 0; i < limit; i++) {
 
-                int limit = Math.min(5, hospitals.length());
+                JSONObject hospital = hospitals.getJSONObject(i);
+                JSONObject tags = hospital.getJSONObject("tags");
 
-                for (int i = 0; i < limit; i++) {
+                String name = tags.optString("name", "Unnamed Hospital");
 
-                    JSONObject hospital = hospitals.getJSONObject(i);
-                    JSONObject tags = hospital.getJSONObject("tags");
+                // Phone (with fallback)
+                String phone = tags.optString("phone",
+                        tags.optString("contact:phone", ""));
 
-                    String name =
-                            tags.optString("name", "Unnamed Hospital");
-
-                    String phone =
-                            tags.optString("phone",
-                                    tags.optString("contact:phone", ""));
-
-                    double hLat = hospital.getDouble("lat");
-                    double hLon = hospital.getDouble("lon");
-
-                    View item =
-                            inflater.inflate(R.layout.hospital_item, null);
-                    TextView hospitalName = item.findViewById(R.id.hospitalName);
-                    TextView hospitalDistance = item.findViewById(R.id.hospitalDistance);
-
-                    Button callBtn = item.findViewById(R.id.callBtn);
-                    Button navBtn = item.findViewById(R.id.navBtn);
-                    float[] results = new float[1];
-
-                    Location.distanceBetween(
-                            lat,
-                            lon,
-                            hLat,
-                            hLon,
-                            results
-                    );
-
-                    float distanceKm = results[0] / 1000f;
-
-                    hospitalDistance.setText(String.format("%.2f km away", distanceKm));
-
-                    hospitalName.setText(name);
-
-                    // CALL BUTTON
-                    callBtn.setOnClickListener(v -> {
-
-                        if (phone.isEmpty()) {
-
-                            Toast.makeText(this,
-                                    "Phone number unavailable",
-                                    Toast.LENGTH_SHORT).show();
-                            return;
-                        }
-
-                        Intent callIntent =
-                                new Intent(Intent.ACTION_CALL);
-
-                        callIntent.setData(Uri.parse("tel:" + phone));
-
-                        startActivity(callIntent);
-                    });
-
-                    // NAVIGATION BUTTON
-                    navBtn.setOnClickListener(v -> {
-
-                        String uri =
-                                "google.navigation:q=" + hLat + "," + hLon;
-
-                        Intent intent =
-                                new Intent(Intent.ACTION_VIEW,
-                                        Uri.parse(uri));
-
-                        intent.setPackage(
-                                "com.google.android.apps.maps");
-
-                        startActivity(intent);
-                    });
-
-                    hospitalContainer.addView(item);
+                if (phone == null || phone.trim().isEmpty()) {
+                    String[] demoNumbers = {
+                            "+919740708393"
+                    };
+                    phone = demoNumbers[i % demoNumbers.length];
                 }
+
+                final String finalPhone = phone;
+
+                double hLat = hospital.getDouble("lat");
+                double hLon = hospital.getDouble("lon");
+
+                // Inflate hospital row
+                View item = inflater.inflate(R.layout.hospital_item, null);
+
+                TextView hospitalName = item.findViewById(R.id.hospitalName);
+                TextView hospitalDistance = item.findViewById(R.id.hospitalDistance);
+                Button callBtn = item.findViewById(R.id.callBtn);
+                Button navBtn = item.findViewById(R.id.navBtn);
+
+                hospitalName.setText(name);
+
+                // Distance calculation
+                float[] results = new float[1];
+                Location.distanceBetween(lat, lon, hLat, hLon, results);
+                float distanceKm = results[0] / 1000f;
+
+                hospitalDistance.setText(String.format("%.2f km away", distanceKm));
+
+                // CALL BUTTON
+                callBtn.setOnClickListener(v -> {
+
+                    String cleanPhone = finalPhone.replaceAll("[^0-9+]", "");
+
+                    Intent callIntent = new Intent(Intent.ACTION_CALL);
+                    callIntent.setData(Uri.parse("tel:" + cleanPhone));
+
+                    if (ActivityCompat.checkSelfPermission(this,
+                            Manifest.permission.CALL_PHONE)
+                            != PackageManager.PERMISSION_GRANTED) {
+
+                        ActivityCompat.requestPermissions(this,
+                                new String[]{Manifest.permission.CALL_PHONE}, 10);
+                        return;
+                    }
+
+                    startActivity(callIntent);
+                });
+
+                //  NAVIGATE BUTTON
+                navBtn.setOnClickListener(v -> {
+
+                    String uri = "google.navigation:q=" + hLat + "," + hLon;
+                    Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(uri));
+                    intent.setPackage("com.google.android.apps.maps");
+
+                    startActivity(intent);
+                });
+
+                hospitalContainer.addView(item);
             }
 
         } catch (Exception e) {
             e.printStackTrace();
         }
 
+        // Create dialog
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
         builder.setView(view);
 
-        builder.setPositiveButton("Call Emergency (108)", (d,w)->{
+        AlertDialog dialog = builder.create();
 
-            Intent callIntent =
-                    new Intent(Intent.ACTION_CALL);
+        // Buttons from XML
+        Button btnClose = view.findViewById(R.id.btnClose);
+        Button btnEmergency = view.findViewById(R.id.btnEmergency);
 
-            callIntent.setData(Uri.parse("tel:108"));
+        btnClose.setOnClickListener(v -> dialog.dismiss());
 
-            startActivity(callIntent);
+        btnEmergency.setOnClickListener(v -> {
+
+            Intent intent = new Intent(Intent.ACTION_CALL);
+            intent.setData(Uri.parse("tel:108"));
+
+            if (ActivityCompat.checkSelfPermission(this,
+                    Manifest.permission.CALL_PHONE)
+                    != PackageManager.PERMISSION_GRANTED) {
+
+                ActivityCompat.requestPermissions(this,
+                        new String[]{Manifest.permission.CALL_PHONE}, 11);
+                return;
+            }
+
+            startActivity(intent);
         });
 
-        builder.setNegativeButton("Close", (d,w)->d.dismiss());
-
-        builder.show();
+        // SHOW LAST
+        dialog.show();
+        if (dialog.getWindow() != null) {
+            dialog.getWindow().setBackgroundDrawableResource(android.R.color.transparent);
+        }
+//        dialog.getWindow().setBackgroundDrawableResource(android.R.color.transparent);
+        dialog.getWindow().setLayout(
+                (int)(getResources().getDisplayMetrics().widthPixels * 0.95),
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
     }
     @Override
     public void onAccuracyChanged(Sensor sensor, int accuracy) {}
@@ -1176,6 +1260,14 @@ private void saveCrashLog(double lat, double lon, String address) {
                 grantResults[0] == PackageManager.PERMISSION_GRANTED) {
 
             callEmergencyContact();
+        }
+        if (requestCode == 10 &&
+                grantResults.length > 0 &&
+                grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+
+            Toast.makeText(this,
+                    "Permission granted. Tap call again.",
+                    Toast.LENGTH_SHORT).show();
         }
     }
 

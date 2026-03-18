@@ -1,0 +1,52 @@
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="24dp"
+    android:background="@drawable/dialog_bg_light">
+
+    <!-- TITLE -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Accident Detected"
+        android:textSize="20sp"
+        android:textStyle="bold"
+        android:textColor="#0F172A"
+        android:layout_gravity="center"
+        android:layout_marginBottom="16dp"/>
+
+    <!-- COUNTDOWN -->
+    <TextView
+        android:id="@+id/countdownText"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="10"
+        android:textSize="48sp"
+        android:textStyle="bold"
+        android:textColor="#DC2626"
+        android:layout_gravity="center"
+        android:layout_marginBottom="12dp"/>
+
+    <!-- MESSAGE -->
+    <TextView
+        android:id="@+id/messageText"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Calling emergency services..."
+        android:textSize="14sp"
+        android:textColor="#64748B"
+        android:layout_gravity="center"
+        android:layout_marginBottom="20dp"/>
+
+    <!-- BUTTON -->
+    <Button
+        android:id="@+id/btnSafe"
+        android:layout_width="match_parent"
+        android:layout_height="50dp"
+        android:text="I'M SAFE"
+        android:textColor="#FFFFFF"
+        android:backgroundTint="#16A34A"/>
+
+</LinearLayout>
